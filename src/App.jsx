@@ -421,15 +421,15 @@ export default function App() {
   const [oppTeam, setOppTeam] = useState(defaultTeamOthers("Opp"));
 
   // Model knobs
-  const [alpha, setAlpha] = useState(1.2);        // logistic slope
-  const [gamma, setGamma] = useState(1.3);        // nonlinearity exponent
+  const [alpha, setAlpha] = useState(1.1);        // logistic slope
+  const [gamma, setGamma] = useState(1.1);        // nonlinearity exponent
   const [weightImportance, setWeightImportance] = useState(0.1); // kg → units multiplier
-  const [drawBase, setDrawBase] = useState(0.7);  // draw chance near even
-  const [drawDecay, setDrawDecay] = useState(1.2); // how fast draws shrink
+  const [drawBase, setDrawBase] = useState(0.8);  // draw chance near even
+  const [drawDecay, setDrawDecay] = useState(1.05); // how fast draws shrink
   const [drawCap, setDrawCap] = useState(0.9);    // ceiling on draws
-  const [skillKg, setSkillKg] = useState(3);      // kg per TECH point
+  const [skillKg, setSkillKg] = useState(2.5);      // kg per TECH point
   const [skillSlope, setSkillSlope] = useState(1.0); // multiplier on skill bias
-  const [streakPenalty, setStreakPenalty] = useState(0.08); // per extra consecutive fight (8% drop per bout)
+  const [streakPenalty, setStreakPenalty] = useState(0.1); // per extra consecutive fight (8% drop per bout)
   const [mode, setMode] = useState("robust");     // robust | exploit | our_only
 
   const params = { alpha, gamma, weightImportance, drawBase, drawDecay, drawCap, skillKg, skillSlope, streakPenalty };
@@ -587,7 +587,7 @@ export default function App() {
           {/* Model Parameters Panel */}
           <div className="bg-white rounded-2xl shadow p-4">
             <h3 className="font-semibold mb-2">Model parameters</h3>
-            <TextInput label="Weight importance" value={weightImportance} onChange={setWeightImportance} step={0.01} min={0} help="Multiplier converting kg diff to normalized units." />
+            <TextInput label="Weight importance" value={weightImportance} onChange={setWeightImportance} step={0.01} min={0} help="Multiplier converting kg diff to prob units." />
             <TextInput label="Nonlinearity exponent (gamma)" value={gamma} onChange={setGamma} step={0.05} min={0.5} help=">1 makes big edges disproportionately strong." />
             <TextInput label="Logistic slope (alpha)" value={alpha} onChange={setAlpha} step={0.05} min={0.1} help="How sharply advantage converts to win chance." />
             <TextInput label="Draw base" value={drawBase} onChange={setDrawBase} step={0.01} min={0} max={0.99} help="Draw chance when matchups are even." />

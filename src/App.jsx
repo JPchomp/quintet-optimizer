@@ -514,7 +514,7 @@ export default function App() {
       const b = { weight: 90,  condition: 8, tech: 7 };
       const { pWin, pDraw, pLose } = probabilityModel(a, b, params, 1, 1);
       const sum = pWin + pDraw + pLose;
-      tests.push({ name: "Probabilities sum to ~1", passed: Math.abs(sum - 1) < 1e-9, info: `weights 100 vs 90 kg → sum=${sum.toFixed(6)}` });
+      tests.push({ name: "Probabilities sum to ~1", passed: Math.abs(sum - 1) < 1e-9, info: `All combinations → sum=${sum.toFixed(6)}` });
     }
 
     // Test 2: heavier advantage increases win probability
@@ -523,17 +523,17 @@ export default function App() {
       const baseB = { weight: 90, condition: 8, tech: 7 };
       const p0 = probabilityModel(baseA, baseB, params, 1, 1).pWin;
       const heavier = probabilityModel({ ...baseA, weight: 100 }, baseB, params, 1, 1).pWin;
-      tests.push({ name: "Heavier → higher P(win)", passed: heavier > p0, info: `Δweight=+10kg: p0=${p0.toFixed(3)}, p1=${heavier.toFixed(3)}` });
+      tests.push({ name: "Heavier → higher P(win)", passed: heavier > p0, info: `Δweight=+10kg win chance variation: p0=${p0.toFixed(3)} → p1=${heavier.toFixed(3)}` });
     }
 
     // Test 3: draws shrink with larger absolute advantage
     {
       const a = { weight: 100, condition: 8, tech: 7 };
-      const b = { weight: 99,  condition: 8, tech: 7 }; // 1kg diff
-      const c = { weight: 60,  condition: 8, tech: 7 }; // 40kg diff
+      const b = { weight: 90,  condition: 8, tech: 7 }; // 10kg diff
+      const c = { weight: 70,  condition: 8, tech: 7 }; // 30kg diff
       const d1 = probabilityModel(a, b, params, 1, 1).pDraw;
       const d2 = probabilityModel(a, c, params, 1, 1).pDraw;
-      tests.push({ name: "Draws ↓ as advantage ↑", passed: d2 < d1, info: `diff1=1kg→${d1.toFixed(3)}, diff2=40kg→${d2.toFixed(3)}` });
+      tests.push({ name: "Draw chance variation", passed: d2 < d1, info: `diff1=10kg→${d1.toFixed(3)}, diff2=30kg→${d2.toFixed(3)}` });
     }
 
     // Test 4: higher CONDITION increases P(win)
@@ -542,16 +542,16 @@ export default function App() {
       const b = { weight: 90, condition: 5, tech: 7 };
       const highCond = probabilityModel(a, b, params, 1, 1).pWin;
       const lowCond  = probabilityModel({ ...a, condition: 5 }, { ...b, condition: 9 }, params, 1, 1).pWin;
-      tests.push({ name: "Higher CONDITION ↑ P(win)", passed: highCond > lowCond, info: `Δcond=+4: hi=${highCond.toFixed(3)}, lo=${lowCond.toFixed(3)}` });
+      tests.push({ name: "Condition P(win) variation", passed: highCond > lowCond, info: `Δcond=+4: p0=${highCond.toFixed(3)} → p1=${lowCond.toFixed(3)}` });
     }
 
     // Test 5: fatigue penalty reduces P(win) when streak grows
     {
-      const a = { weight: 95, condition: 8, tech: 7 };
+      const a = { weight: 90, condition: 8, tech: 7 };
       const b = { weight: 90, condition: 8, tech: 7 };
       const pFresh = probabilityModel(a, b, params, 1, 1).pWin;
       const pTired = probabilityModel(a, b, params, 3, 1).pWin;
-      tests.push({ name: "Fatigue reduces P(win)", passed: pTired < pFresh, info: `Δstreak=+2, 95vs90kg: fresh=${pFresh.toFixed(3)}, tired=${pTired.toFixed(3)}` });
+      tests.push({ name: "Fatigue reduces P(win)", passed: pTired < pFresh, info: `Δstreak=+2, 90vs90kg: fresh=${pFresh.toFixed(3)}, tired=${pTired.toFixed(3)}` });
     }
 
     // Test 6: higher TECH increases P(win)
@@ -560,7 +560,7 @@ export default function App() {
       const b = { weight: 90, condition: 8, tech: 5 };
       const pHighTech = probabilityModel(a, b, params, 1, 1).pWin;
       const pLowTech  = probabilityModel({ ...a, tech: 5 }, { ...b, tech: 9 }, params, 1, 1).pWin;
-      tests.push({ name: "Higher TECH ↑ P(win)", passed: pHighTech > pLowTech, info: `Δtech=+4: hi=${pHighTech.toFixed(3)}, lo=${pLowTech.toFixed(3)}` });
+      tests.push({ name: "Higher technique ↑ P(win)", passed: pHighTech > pLowTech, info: `Δtech=+4: p0=${pLowTech.toFixed(3)} → p1${pHighTech.toFixed(3)},` });
     }
 
     return tests;

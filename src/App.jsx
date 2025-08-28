@@ -581,7 +581,7 @@ export default function App() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
           <RosterEditor team={ourTeam} setTeam={setOurTeam} title="Our Team" />
-          <RosterEditor team={oppTeam} setTeam={setOppTeam} title={`Opponent Team (total: ${${oppTotal.toFixed(1)}} kg)`} />
+          <RosterEditor team={oppTeam} setTeam={setOppTeam} title={"Opponent Team" />
         </div>
         <div className="space-y-4">
           {/* Model Parameters Panel */}

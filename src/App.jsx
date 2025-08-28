@@ -674,9 +674,8 @@ export default function App() {
 
       {/* Footnote / sanity notes */}
       <div className="text-xs text-gray-500">
-        Condition maps to ~0.85–1.15 on weight; TECH adds ≈ (skillKg × weightImportance) per point in normalized units.
-        Streak penalty reduces an athlete's effective condition for each consecutive bout, reflecting reality: even killers get tired.
-        The DP explores every win/lose/draw branch for any two orders.
+        Condition maps to ~0.85–1.15 on weight; technique adds ≈ (skillKg × weightImportance) per point in normalized units.
+        The markov chain explores every win/lose/draw branch for any two orders via brute "enumeration".
       </div>
     </div>
   );

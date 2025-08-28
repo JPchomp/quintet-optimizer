@@ -615,9 +615,9 @@ export default function App() {
         <h3 className="font-semibold mb-3">Recommended Order</h3>
         {bestOurOrderIdxs.length > 0 ? (
           <div className="space-y-2">
-            <OrderBadge label={`Our optimal order (${ '${mode}' }) — EV net wins: ${'${result.best.ev.toFixed(3)}'}`} team={ourTeam} orderIdxs={bestOurOrderIdxs} />
+            <OrderBadge label={`Our optimal order (${mode}) — EV net wins: ${result.best.ev.toFixed(3)}`} team={ourTeam} orderIdxs={bestOurOrderIdxs} />
             {oppBestResponse && (
-              <OrderBadge label={`Opponent best response — EV vs us: ${'${oppBestResponse.ev.toFixed(3)}'}`} team={oppTeam} orderIdxs={oppBestResponse.order} />
+              <OrderBadge label = {`Opponent best response — EV vs us: ${oppBestResponse.ev.toFixed(3)}`}  team={oppTeam} orderIdxs={oppBestResponse.order} />
             )}
           </div>
         ) : (

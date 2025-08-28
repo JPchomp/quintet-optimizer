@@ -573,8 +573,9 @@ export default function App() {
       {/* Header */}
       <h1 className="text-2xl font-bold">Quintet Lineup Optimizer</h1>
       <p className="text-sm text-gray-600">
-        Win chance = logistic(alpha) of a scaled, nonlinear advantage (weightImportance, gamma) plus a technical bias;
-        draws shrink with drawDecay from drawBase up to drawCap. Condition and Tech are 1–10. Fatigue from consecutive fights is penalized.
+        Win chance = logistic(x) of a scaled, nonlinear advantage (weightImportance, gamma) plus a bias for technique;
+        draws shrink with drawDecay from drawBase up to drawCap. Condition and Tech are 1–10. Fatigue from consecutive fights is penalized too.
+        Look at the sanity check in the bottom to figure out if the Deltas match up with your expected win probability variations.
       </p>
 
       {/* Rosters + Controls */}

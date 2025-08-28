@@ -581,7 +581,7 @@ export default function App() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
           <RosterEditor team={ourTeam} setTeam={setOurTeam} title="Our Team" />
-          <RosterEditor team={oppTeam} setTeam={setOppTeam} title={`Opponent Team (total: ${'${oppTotal.toFixed(1)}'} kg)`} />
+          <RosterEditor team={oppTeam} setTeam={setOppTeam} title={`Opponent Team (total: ${${oppTotal.toFixed(1)}} kg)`} />
         </div>
         <div className="space-y-4">
           {/* Model Parameters Panel */}
@@ -617,7 +617,7 @@ export default function App() {
           <div className="space-y-2">
             <OrderBadge label={`Our optimal order (${mode}) — EV net wins: ${result.best.ev.toFixed(3)}`} team={ourTeam} orderIdxs={bestOurOrderIdxs} />
             {oppBestResponse && (
-              <OrderBadge label = {`Opponent best response — EV vs us: ${oppBestResponse.ev.toFixed(3)}`}  team={oppTeam} orderIdxs={oppBestResponse.order} />
+              <OrderBadge label = {`Assuming opponent best response — EV: ${oppBestResponse.ev.toFixed(3)}`}  team={oppTeam} orderIdxs={oppBestResponse.order} />
             )}
           </div>
         ) : (

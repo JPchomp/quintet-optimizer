@@ -497,6 +497,45 @@ export default function App() {
     );
   };
 
+  /**
+   * ProbMatrix()
+   * Displays win/draw/lose percentages for each of our players vs each opponent (fresh on mat).
+   */
+  const ProbMatrix = () => (
+    <div className="bg-white rounded-2xl shadow p-4">
+      <h3 className="font-semibold mb-2">Matchup probabilities (fresh)</h3>
+      <div className="overflow-auto">
+        <table className="border-collapse">
+          <thead>
+            <tr>
+              <th className="border p-2">Our \\ Opp</th>
+              {oppTeam.map((p, j) => (
+                <th key={j} className="border p-2 text-sm">{p.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ourTeam.map((a, i) => (
+              <tr key={i}>
+                <th className="border p-2 text-sm text-left">{a.name}</th>
+                {oppTeam.map((b, j) => {
+                  const { pWin, pDraw, pLose } = probabilityModel(a, b, params, 1, 1);
+                  return (
+                    <td key={j} className="border p-2 text-xs text-center">
+                      W {(pWin * 100).toFixed(0)}%<br />
+                      D {(pDraw * 100).toFixed(0)}%<br />
+                      L {(pLose * 100).toFixed(0)}%
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   // Display opponent total weight explicitly
   const oppTotal = oppTeam.reduce((s, p) => s + (Number(p.weight) || 0), 0);
 
@@ -609,6 +648,8 @@ export default function App() {
           <ProbPreview />
         </div>
       </div>
+
+      <ProbMatrix />
 
       {/* Recommendation + Best Response */}
       <div className="bg-white rounded-2xl shadow p-4">

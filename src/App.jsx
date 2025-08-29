@@ -602,9 +602,8 @@ export default function App() {
           <div className="bg-white rounded-2xl shadow p-4">
             <h3 className="font-semibold mb-2">Opponent-order assumption</h3>
             <select className="w-full border rounded-xl p-2" value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="robust">Robust: maximize our worst-case EV (opponent picks best order)</option>
-              <option value="exploit">Exploitative: maximize EV vs current opponent order</option>
-              <option value="our_only">Our lineup only (opponent fixed)</option>
+              <option value="exploit">Exploitative: max EV vs current opponent order</option>
+              <option value="robust">Robust: max our worst-case EV (opponent picks their best order)</option>
             </select>
           </div>
           <ProbPreview />

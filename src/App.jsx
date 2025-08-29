@@ -649,7 +649,6 @@ export default function App() {
         </div>
       </div>
 
-      <ProbMatrix />
 
       {/* Recommendation + Best Response */}
       <div className="bg-white rounded-2xl shadow p-4">
@@ -711,6 +710,8 @@ export default function App() {
           ))}
         </ul>
       </div>
+
+      <ProbMatrix />
 
       {/* Footnote / sanity notes */}
       <div className="text-xs text-gray-500">

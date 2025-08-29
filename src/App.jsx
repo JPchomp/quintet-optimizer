@@ -4,52 +4,21 @@ import React, { useMemo, useState } from "react";
  * ------------------------------------------------------------
  * QUINTET LINEUP OPTIMIZER (Submission-only, Winner-stays)
  * ------------------------------------------------------------
- * Fixes: closes all JSX strings/tags and adds a Diagnostics & Tests panel.
- * 
- * What this file does:
- * 1) Lets you enter two 5-person teams (Our vs Opp): name, weight, CONDITION (1–10), TECH (1–10).
- * 2) Converts those to matchup probabilities using a normalized, NONLINEAR advantage and a LOGISTIC mapping.
- * 3) Includes a DRAW model and a FATIGUE PENALTY for consecutive fights (winner-stays).
- * 4) Evaluates ALL win/lose/draw branches via dynamic programming (DP) for any pair of orders.
- * 5) Searches all 5! permutations of our lineup and recommends the order that maximizes expected net wins.
- * 6) "Robust" mode chooses our order that maximizes the WORST-CASE EV across ALL opponent orders.
- * 7) Diagnostics panel runs simple tests to catch regressions or parameter nonsense.
- *
- * Parameter glossary:
- * - Weight importance: multiplier converting kg difference to normalized units.
- * - Nonlinearity exponent (gamma > 1): makes bigger edges disproportionately strong.
- * - Logistic slope (alpha): how sharply normalized advantage converts to P(win).
- * - Draw base / decay / cap: baseline draw chance, how fast it shrinks, and its ceiling.
- * - Condition (1–10): mapped to a 0.85–1.15 multiplier on weight.
- * - Technical ability (1–10): converted to a few "kg" of edge per point (skillKg), scaled by skillSlope.
- * - Streak penalty: per extra consecutive fight, effective condition is reduced for that athlete.
+ * Probability model: three deltas (weight, condition, technique).
+ * Each delta has its own exponent (nonlinearity) and multiplier (importance).
+ * No per-factor scales; the multipliers set relative importance directly.
+ * Draw probability PD is bounded with a floor of 0.25 and PD(0) = user-set PD0.
+ * PD decays with |S| via a fixed tanh curve (no extra params).
+ * Winner-stays fatigue reduces CONDITION only before computing its delta.
  */
 
 // ============================================================
 // =                         UTILITIES                        =
 // ============================================================
-/**
- * clamp(x, lo, hi)
- * Ensures x stays within [lo, hi]. Used for probabilities and factors.
- */
 function clamp(x, lo = 0, hi = 1) {
   return Math.max(lo, Math.min(hi, x));
 }
 
-/**
- * sigmoid(z)
- * Logistic function mapping real numbers to (0,1). Used to convert advantage to P(win).
- */
-function sigmoid(z) {
-  return 1 / (1 + Math.exp(-z));
-}
-
-/**
- * permutations(arr)
- * Generates all permutations of a short array (Heap's algorithm). 5! = 120, fine for UI.
- * @param {any[]} arr - the array of indices to permute
- * @returns {any[][]} - list of permutations
- */
 function permutations(arr) {
   const res = [];
   const a = arr.slice();
@@ -73,11 +42,6 @@ function permutations(arr) {
 // ============================================================
 // =                        DEFAULT DATA                      =
 // ============================================================
-/**
- * defaultTeam(namePrefix)
- * YOUR supplied roster. Names are fixed; condition/tech default to mid-high.
- * We keep condition/tech available (1–10) so you can edit them in UI.
- */
 function defaultTeam(namePrefix) {
   return [
     { name: "JP",     weight: 62,  condition: 10, tech: 10 },
@@ -88,10 +52,6 @@ function defaultTeam(namePrefix) {
   ];
 }
 
-/**
- * defaultTeamOthers(namePrefix)
- * Opponent roster initialized to 85 kg each, with editable condition/tech.
- */
 function defaultTeamOthers(namePrefix) {
   return [
     { name: `${namePrefix} 1`, weight: 85, condition: 10, tech: 10 },
@@ -105,10 +65,6 @@ function defaultTeamOthers(namePrefix) {
 // ============================================================
 // =                           UI                             =
 // ============================================================
-/**
- * TextInput({ label, value, onChange, step, min, max, help })
- * Generic numeric input with label and optional help text.
- */
 function TextInput({ label, value, onChange, step = 1, min, max, help }) {
   return (
     <label className="block text-sm mb-2">
@@ -127,11 +83,6 @@ function TextInput({ label, value, onChange, step = 1, min, max, help }) {
   );
 }
 
-/**
- * RosterEditor({ team, setTeam, title })
- * Small editor for a 5-person roster. Shows live total weight.
- * Lets you edit name, weight, condition (1–10), and technical ability (1–10).
- */
 function RosterEditor({ team, setTeam, title }) {
   const update = (idx, key, val) => {
     const t = team.slice();
@@ -172,21 +123,9 @@ function RosterEditor({ team, setTeam, title }) {
 // =                    PROBABILITY MODEL                     =
 // ============================================================
 /**
- * conditionFactor(c)
- * Map Condition 1–10 to a smooth multiplier on weight.
- * 1 → 0.85   5 → 1.00   10 → 1.15
- */
-function conditionFactor(c) {
-  const cClamped = clamp((c - 1) / 9, 0, 1); // 0..1
-  return 0.85 + 0.30 * cClamped; // 0.85..1.15
-}
-
-/**
  * fatigueFactor(streak, streakPenalty)
- * Apply a linear penalty per extra consecutive fight for the SAME athlete.
- * streak = 1 (fresh on mat) → factor 1.0
- * streak = 2 → 1 - streakPenalty
- * streak = 3 → 1 - 2*streakPenalty, etc. clipped at 0.7 minimum.
+ * Linear penalty per extra consecutive fight for the SAME athlete.
+ * streak = 1 → 1.0, 2 → 1 - p, 3 → 1 - 2p, clipped to [0.7, 1].
  */
 function fatigueFactor(streak, streakPenalty) {
   const extra = Math.max(0, streak - 1);
@@ -194,98 +133,62 @@ function fatigueFactor(streak, streakPenalty) {
 }
 
 /**
- * skillBias(techA, techB, params)
- * Convert TECH difference to a normalized bias equivalent to a few kg.
- * - skillKg: how many kg each TECH point is worth
- * - weightImportance: kg → logistic units multiplier
- * - skillSlope: extra multiplier on the bias in logistic input
-*/
-function skillBias(techA, techB, params) {
-  const diffTech = (techA || 0) - (techB || 0); // allow undefined tech
-  const units = params.weightImportance * params.skillKg * diffTech; // kg → normalized units
-  return params.skillSlope * units;
+ * scoreFromDelta(delta, gamma, alpha)
+ * Signed, nonlinear contribution: sign(delta)*|delta|^gamma scaled by alpha.
+ */
+function scoreFromDelta(delta, gamma, alpha) {
+  if (!alpha) return 0;
+  const mag = Math.pow(Math.abs(delta), gamma);
+  const signed = Math.sign(delta) * mag;
+  return alpha * signed;
 }
 
 /**
  * probabilityModel(a, b, params, streakA, streakB)
- * Returns P(win), P(draw), P(lose) for athlete a vs b, adjusting for condition, tech, and fatigue streaks.
- * - a, b: athlete objects { weight, condition(1–10), tech(1–10) }
- * - params: model knobs
- * - streakA, streakB: consecutive bouts the current athletes have already fought (1 = fresh on mat)
+ * Three-delta model with bounded draw and soft split of residual mass.
+ * Returns { pWin, pDraw, pLose, S, deltas }
  */
 function probabilityModel(a, b, params, streakA = 1, streakB = 1) {
-  // Effective weight with condition and fatigue
-  const effA = a.weight * conditionFactor(a.condition) * fatigueFactor(streakA, params.streakPenalty);
-  const effB = b.weight * conditionFactor(b.condition) * fatigueFactor(streakB, params.streakPenalty);
+  // Effective CONDITION after fatigue (winner-stays effect applies to condition only)
+  const effCondA = (a.condition ?? 5) * fatigueFactor(streakA, params.streakPenalty);
+  const effCondB = (b.condition ?? 5) * fatigueFactor(streakB, params.streakPenalty);
 
-  // Weight difference scaled then apply nonlinearity (gamma)
-  const raw = params.weightImportance * (effA - effB); // normalized units
-  const mag = Math.pow(Math.abs(raw), params.gamma);
-  const signed = Math.sign(raw) * mag;
+  // Raw deltas (units: kg, cond points, tech points)
+  const dw = (a.weight ?? 0) - (b.weight ?? 0);
+  const dc = effCondA - effCondB;
+  const dt = (a.tech ?? 5) - (b.tech ?? 5);
 
-  // Add technical bias, then pass through logistic (alpha)
-  const z = params.alpha * (signed + skillBias(a.tech, b.tech, params));
-  const pWinRaw = sigmoid(z);
+  // Component scores without any per-factor scaling
+  const Sw = scoreFromDelta(dw, params.wGamma, params.wAlpha);
+  const Sc = scoreFromDelta(dc, params.cGamma, params.cAlpha);
+  const St = scoreFromDelta(dt, params.tGamma, params.tAlpha);
 
-  // Draw probability shrinks as the absolute advantage grows
-  const pDraw = clamp(
-    params.drawBase * Math.exp(-params.drawDecay * Math.abs(raw)),
-    0,
-    params.drawCap
-  );
+  // Total advantage score
+  const S = Sw + Sc + St; // sign favors A when positive
+  const A = Math.abs(S);
 
-  // Allocate remaining mass to win/loss
-  const pWin = clamp((1 - pDraw) * pWinRaw, 0, 1);
-  const pLose = clamp(1 - pDraw - pWin, 0, 1);
+  // Draw probability: floor 0.25, baseline PD0 at S=0, decay with |S| via tanh
+  const PD0 = clamp(params.drawBase0, 0.25, 0.95); // keep sane
+  const PD = Math.max(0.25, PD0 - 0.5 * Math.tanh(A));
+  const M = 1 - PD;
 
-  return { pWin, pDraw, pLose, rawAdvantage: raw, effA, effB };
+  // Split remaining mass with softness k, h in [0, 0.5)
+  const h = 0.5 * (A / (A + params.splitK));
+  let PW = S >= 0 ? M * (0.5 + h) : M * (0.5 - h);
+  let PL = M - PW;
+
+  // Clamp and renormalize for safety
+  PW = clamp(PW, 0, 1);
+  const pD = clamp(PD, 0, 1);
+  PL = clamp(PL, 0, 1);
+  const sum = PW + pD + PL;
+  return { pWin: PW / sum, pDraw: pD / sum, pLose: PL / sum, S, deltas: { dw, dc, dt } };
 }
 
 // ============================================================
 // =          DYNAMIC PROGRAMMING (ALL OUTCOME PATHS)         =
 // ============================================================
-/**
- * expectedNetWins(our, opp, params)
- * DP over states (i, j, si, sj) where:
- *  - i: index of our current athlete
- *  - j: index of their current athlete
- *  - si: our athlete's consecutive-fight streak (starts at 1)
- *  - sj: their athlete's consecutive-fight streak (starts at 1)
- * Transitions (winner-stays, draws remove both):
- *  - Win:   reward +1, state → (i,   j+1, si+1, 1)
- *  - Lose:  reward −1, state → (i+1, j,   1,    sj+1)
- *  - Draw:  reward 0,  state → (i+1, j+1, 1,    1)
- */
 function expectedNetWins(our, opp, params) {
-  const n = our.length;
-  const m = opp.length;
-  const memo = new Map();
-  const key = (i, j, si, sj) => `${i},${j},${si},${sj}`;
-
-  function f(i, j, si, sj) {
-    if (i >= n || j >= m) return 0; // terminal
-    const k = key(i, j, si, sj);
-    if (memo.has(k)) return memo.get(k);
-
-    const { pWin, pDraw, pLose } = probabilityModel(our[i], opp[j], params, si, sj);
-
-    const val =
-      pWin * (1 + f(i, j + 1, si + 1, 1)) +
-      pLose * (-1 + f(i + 1, j, 1, sj + 1)) +
-      pDraw * (0 + f(i + 1, j + 1, 1, 1));
-
-    memo.set(k, val);
-    return val;
-  }
-
-  return f(0, 0, 1, 1);
-}
-
-/**
- * expectedOurWins(our, opp, params)
- * Same DP but counting only our wins (diagnostic). Not used in the main UI.
- */
-function expectedOurWins(our, opp, params) {
   const n = our.length;
   const m = opp.length;
   const memo = new Map();
@@ -295,7 +198,7 @@ function expectedOurWins(our, opp, params) {
     const k = key(i, j, si, sj);
     if (memo.has(k)) return memo.get(k);
     const { pWin, pDraw, pLose } = probabilityModel(our[i], opp[j], params, si, sj);
-    const val = pWin * (1 + f(i, j + 1, si + 1, 1)) + pLose * (0 + f(i + 1, j, 1, sj + 1)) + pDraw * (0 + f(i + 1, j + 1, 1, 1));
+    const val = pWin * (1 + f(i, j + 1, si + 1, 1)) + pLose * (-1 + f(i + 1, j, 1, sj + 1)) + pDraw * (0 + f(i + 1, j + 1, 1, 1));
     memo.set(k, val);
     return val;
   }
@@ -305,11 +208,6 @@ function expectedOurWins(our, opp, params) {
 // ============================================================
 // =                 SEARCH OUR LINEUP ORDERS                 =
 // ============================================================
-/**
- * optimizeOurOrder(our, opp, params)
- * Brute-force our 5! orders; score EV vs current opponent order.
- * Returns best order and the top-5 list for transparency.
- */
 function optimizeOurOrder(our, opp, params) {
   const idxs = our.map((_, i) => i);
   const perms = permutations(idxs);
@@ -325,10 +223,6 @@ function optimizeOurOrder(our, opp, params) {
   return { best, top: top.slice(0, 5) };
 }
 
-/**
- * robustOurOrder(our, opp, params)
- * Maximize our MINIMUM EV over ALL opponent orders (their best response).
- */
 function robustOurOrder(our, opp, params) {
   const ourIdxs = our.map((_, i) => i);
   const oppIdxs = opp.map((_, i) => i);
@@ -351,10 +245,6 @@ function robustOurOrder(our, opp, params) {
   return { best, top: top.slice(0, 5) };
 }
 
-/**
- * optimizeOurOrderWithFirst(our, opp, params, firstIdx)
- * Optimize assuming our player `firstIdx` must go first.
- */
 function optimizeOurOrderWithFirst(our, opp, params, firstIdx) {
   const remaining = our.map((_, i) => i).filter((i) => i !== firstIdx);
   const perms = permutations(remaining);
@@ -368,10 +258,6 @@ function optimizeOurOrderWithFirst(our, opp, params, firstIdx) {
   return best;
 }
 
-/**
- * robustOurOrderWithFirst(our, opp, params, firstIdx)
- * Robust counterpart with player `firstIdx` fixed first.
- */
 function robustOurOrderWithFirst(our, opp, params, firstIdx) {
   const remaining = our.map((_, i) => i).filter((i) => i !== firstIdx);
   const ourPerms = permutations(remaining);
@@ -392,10 +278,6 @@ function robustOurOrderWithFirst(our, opp, params, firstIdx) {
   return best;
 }
 
-/**
- * pickOppBestOrderAgainst(our, opp, params)
- * For a fixed our-order, find opponent order minimizing our EV (their best response).
- */
 function pickOppBestOrderAgainst(our, opp, params) {
   const oppIdxs = opp.map((_, i) => i);
   const oppPerms = permutations(oppIdxs);
@@ -411,37 +293,34 @@ function pickOppBestOrderAgainst(our, opp, params) {
 // ============================================================
 // =                           APP                            =
 // ============================================================
-/**
- * App()
- * Wires together rosters, parameter controls, optimization mode, results, and diagnostics.
- */
 export default function App() {
-  // Team state (use YOUR supplied default team and the defaultTeamOthers for opponents)
+  // Teams
   const [ourTeam, setOurTeam] = useState(defaultTeam("Our"));
   const [oppTeam, setOppTeam] = useState(defaultTeamOthers("Opp"));
 
-  // Model knobs
-  const [alpha, setAlpha] = useState(1.1);        // logistic slope
-  const [gamma, setGamma] = useState(1.1);        // nonlinearity exponent
-  const [weightImportance, setWeightImportance] = useState(0.1); // kg → units multiplier
-  const [drawBase, setDrawBase] = useState(0.8);  // draw chance near even
-  const [drawDecay, setDrawDecay] = useState(1.05); // how fast draws shrink
-  const [drawCap, setDrawCap] = useState(0.9);    // ceiling on draws
-  const [skillKg, setSkillKg] = useState(2.5);      // kg per TECH point
-  const [skillSlope, setSkillSlope] = useState(1.0); // multiplier on skill bias
-  const [streakPenalty, setStreakPenalty] = useState(0.1); // per extra consecutive fight (8% drop per bout)
-  const [mode, setMode] = useState("robust");     // robust | exploit | our_only
+  // Model knobs — multipliers and exponents only; PD0 for draws; split softness; fatigue
+  const [wGamma, setWGamma] = useState(1.0);
+  const [wAlpha, setWAlpha] = useState(1.0);
 
-  const params = { alpha, gamma, weightImportance, drawBase, drawDecay, drawCap, skillKg, skillSlope, streakPenalty };
+  const [cGamma, setCGamma] = useState(1.0);
+  const [cAlpha, setCAlpha] = useState(1.0);
 
-  // Compute optimal order according to mode
+  const [tGamma, setTGamma] = useState(1.0);
+  const [tAlpha, setTAlpha] = useState(1.0);
+
+  const [drawBase0, setDrawBase0] = useState(0.80); // PD(0)
+  const [splitK, setSplitK] = useState(2.0);        // softness for win/loss split
+  const [streakPenalty, setStreakPenalty] = useState(0.08); // per extra consecutive fight
+  const [mode, setMode] = useState("exploit");
+
+  const params = { wGamma, wAlpha, cGamma, cAlpha, tGamma, tAlpha, drawBase0, splitK, streakPenalty };
+
+  // Optimization
   const result = useMemo(() => {
-    if (mode === "our_only") return optimizeOurOrder(ourTeam, oppTeam, params);
-    if (mode === "exploit")   return optimizeOurOrder(ourTeam, oppTeam, params);
+    if (mode === "exploit") return optimizeOurOrder(ourTeam, oppTeam, params);
     return robustOurOrder(ourTeam, oppTeam, params);
-  }, [ourTeam, oppTeam, alpha, gamma, weightImportance, drawBase, drawDecay, drawCap, skillKg, skillSlope, streakPenalty, mode]);
+  }, [ourTeam, oppTeam, wGamma, wAlpha, cGamma, cAlpha, tGamma, tAlpha, drawBase0, splitK, streakPenalty, mode]);
 
-  // Extract recommended order and opponent best response
   const bestOurOrderIdxs = result?.best?.order || [];
   const bestOurOrder = bestOurOrderIdxs.map((i) => ourTeam[i]);
 
@@ -450,57 +329,33 @@ export default function App() {
     return pickOppBestOrderAgainst(bestOurOrder, oppTeam, params);
   }, [bestOurOrder, oppTeam, params]);
 
-  // Best orders with each of our players forced to start
-  const forcedFirst = useMemo(() => {
-    return ourTeam.map((_, i) => {
-      const res = mode === "robust"
-        ? robustOurOrderWithFirst(ourTeam, oppTeam, params, i)
-        : optimizeOurOrderWithFirst(ourTeam, oppTeam, params, i);
-      return { first: i, order: res.order, ev: res.ev };
-    });
-  }, [ourTeam, oppTeam, alpha, gamma, weightImportance, drawBase, drawDecay, drawCap, skillKg, skillSlope, streakPenalty, mode]);
-
-  /**
-   * OrderBadge({ label, team, orderIdxs })
-   * Visually render a lineup order as labeled chips.
-   */
+  // Preview components
   function OrderBadge({ label, team, orderIdxs }) {
     return (
       <div className="rounded-2xl border p-3">
         <div className="font-semibold mb-2">{label}</div>
         <ol className="flex flex-wrap gap-2">
           {orderIdxs.map((idx, k) => (
-            <li key={k} className="px-3 py-1 rounded-full bg-gray-100 border">
-              {team[idx].name}
-            </li>
+            <li key={k} className="px-3 py-1 rounded-full bg-gray-100 border">{team[idx].name}</li>
           ))}
         </ol>
       </div>
     );
   }
 
-  /**
-  * ProbPreview()
-  * Quick sanity panel to show current probability breakdown for our player 5 vs opponent player 1,
-  * with streaks assumed = 1 (fresh on mat).
-  */
   const ProbPreview = () => {
-    const a = ourTeam[4];
+    const a = ourTeam[0];
     const b = oppTeam[0];
-    const { pWin, pDraw, pLose, rawAdvantage } = probabilityModel(a, b, params, 1, 1);
+    const { pWin, pDraw, pLose, S, deltas } = probabilityModel(a, b, params, 1, 1);
     return (
       <div className="rounded-2xl border p-3">
-        <div className="font-semibold mb-2">Probability model preview (Our[5] vs Opp[1])</div>
-        <div className="text-sm">Scaled advantage (units): {rawAdvantage.toFixed(3)}</div>
-        <div className="text-sm">P(win): {(pWin * 100).toFixed(1)}% | P(draw): {(pDraw * 100).toFixed(1)}% | P(lose): {(pLose * 100).toFixed(1)}%</div>
+        <div className="font-semibold mb-2">Probability model preview (Our[1] vs Opp[1])</div>
+        <div className="text-sm">Score S: {S.toFixed(3)} | Δw: {deltas.dw.toFixed(1)} kg, Δc: {deltas.dc.toFixed(2)}, Δt: {deltas.dt.toFixed(2)}</div>
+        <div className="text-sm">W { (pWin*100).toFixed(1) }% | D { (pDraw*100).toFixed(1) }% | L { (pLose*100).toFixed(1) }%</div>
       </div>
     );
   };
 
-  /**
-   * ProbMatrix()
-   * Displays win/draw/lose percentages for each of our players vs each opponent (fresh on mat).
-   */
   const ProbMatrix = () => (
     <div className="bg-white rounded-2xl shadow p-4">
       <h3 className="font-semibold mb-2">Matchup probabilities (fresh)</h3>
@@ -536,128 +391,127 @@ export default function App() {
     </div>
   );
 
-  // Display opponent total weight explicitly
-  const oppTotal = oppTeam.reduce((s, p) => s + (Number(p.weight) || 0), 0);
-
-  // -------------------- Diagnostics & Tests --------------------
-  /**
-   * runTests()
-   * Executes simple invariants and sanity checks. Returns an array of { name, passed, info }.
-   */
+  // Diagnostics & Tests
   function runTests() {
     const tests = [];
 
-    // Test 1: probabilities sum ~ 1
+    // Sum to ~1
     {
       const a = { weight: 100, condition: 8, tech: 7 };
-      const b = { weight: 90,  condition: 8, tech: 7 };
+      const b = { weight: 100, condition: 8, tech: 7 };
       const { pWin, pDraw, pLose } = probabilityModel(a, b, params, 1, 1);
       const sum = pWin + pDraw + pLose;
-      tests.push({ name: "Probabilities sum to ~1", passed: Math.abs(sum - 1) < 1e-9, info: `All combinations → sum=${sum.toFixed(6)}` });
+      tests.push({ name: "Probabilities sum to 1", passed: Math.abs(sum - 1) < 1e-9, info: `sum=${sum.toFixed(6)}` });
     }
 
-    // Test 2: heavier advantage increases win probability
+    // Baseline PD(0)=drawBase0, PW=PL=(1-PD0)/2
+    {
+      const a = { weight: 90, condition: 5, tech: 5 };
+      const b = { weight: 90, condition: 5, tech: 5 };
+      const { pWin, pDraw, pLose } = probabilityModel(a, b, params, 1, 1);
+      const PD0 = clamp(drawBase0, 0.25, 0.95);
+      const target = (1 - PD0) / 2;
+      tests.push({ name: "Zero deltas baseline", passed: Math.abs(pDraw - PD0) < 1e-6 && Math.abs(pWin - target) < 1e-3, info: `W=${(pWin*100).toFixed(1)} D=${(pDraw*100).toFixed(1)} L=${(pLose*100).toFixed(1)} (PD0=${(PD0*100).toFixed(1)})` });
+    }
+
+    // Draw never below 0.25
+    {
+      const a = { weight: 140, condition: 10, tech: 10 };
+      const b = { weight: 60,  condition: 1,  tech: 1 };
+      const { pDraw } = probabilityModel(a, b, params, 1, 1);
+      tests.push({ name: "Draw floor 0.25", passed: pDraw >= 0.25 - 1e-9, info: `pD=${pDraw.toFixed(3)}` });
+    }
+
+    // Monotonicity checks
     {
       const baseA = { weight: 90, condition: 8, tech: 7 };
       const baseB = { weight: 90, condition: 8, tech: 7 };
       const p0 = probabilityModel(baseA, baseB, params, 1, 1).pWin;
-      const heavier = probabilityModel({ ...baseA, weight: 100 }, baseB, params, 1, 1).pWin;
-      tests.push({ name: "Heavier → higher P(win)", passed: heavier > p0, info: `Δweight=+10kg win chance variation: p0=${p0.toFixed(3)} → p1=${heavier.toFixed(3)}` });
+      const pW = probabilityModel({ ...baseA, weight: 100 }, baseB, params, 1, 1).pWin;
+      const pC = probabilityModel({ ...baseA, condition: 10 }, baseB, params, 1, 1).pWin;
+      const pT = probabilityModel({ ...baseA, tech: 10 }, baseB, params, 1, 1).pWin;
+      tests.push({ name: "Heavier ↑ P(win)", passed: pW > p0, info: `p0=${p0.toFixed(3)} → pW=${pW.toFixed(3)}` });
+      tests.push({ name: "Condition ↑ P(win)", passed: pC > p0, info: `p0=${p0.toFixed(3)} → pC=${pC.toFixed(3)}` });
+      tests.push({ name: "Technique ↑ P(win)", passed: pT > p0, info: `p0=${p0.toFixed(3)} → pT=${pT.toFixed(3)}` });
     }
 
-    // Test 3: draws shrink with larger absolute advantage
-    {
-      const a = { weight: 100, condition: 8, tech: 7 };
-      const b = { weight: 90,  condition: 8, tech: 7 }; // 10kg diff
-      const c = { weight: 70,  condition: 8, tech: 7 }; // 30kg diff
-      const d1 = probabilityModel(a, b, params, 1, 1).pDraw;
-      const d2 = probabilityModel(a, c, params, 1, 1).pDraw;
-      tests.push({ name: "Draw chance variation", passed: d2 < d1, info: `diff1=10kg→${d1.toFixed(3)}, diff2=30kg→${d2.toFixed(3)}` });
-    }
-
-    // Test 4: higher CONDITION increases P(win)
-    {
-      const a = { weight: 90, condition: 9, tech: 7 };
-      const b = { weight: 90, condition: 5, tech: 7 };
-      const highCond = probabilityModel(a, b, params, 1, 1).pWin;
-      const lowCond  = probabilityModel({ ...a, condition: 5 }, { ...b, condition: 9 }, params, 1, 1).pWin;
-      tests.push({ name: "Condition P(win) variation", passed: highCond > lowCond, info: `Δcond=+4: p0=${highCond.toFixed(3)} → p1=${lowCond.toFixed(3)}` });
-    }
-
-    // Test 5: fatigue penalty reduces P(win) when streak grows
+    // Fatigue reduces win chance (conditional on no-draw to avoid PD side-effects)
     {
       const a = { weight: 90, condition: 8, tech: 7 };
       const b = { weight: 90, condition: 8, tech: 7 };
-      const pFresh = probabilityModel(a, b, params, 1, 1).pWin;
-      const pTired = probabilityModel(a, b, params, 3, 1).pWin;
-      tests.push({ name: "Fatigue reduces P(win)", passed: pTired < pFresh, info: `Δstreak=+2, 90vs90kg: fresh=${pFresh.toFixed(3)}, tired=${pTired.toFixed(3)}` });
+      const freshRes = probabilityModel(a, b, params, 1, 1);
+      const tiredRes = probabilityModel(a, b, params, 3, 1);
+      const fresh = freshRes.pWin;
+      const tired = tiredRes.pWin;
+      const freshShare = fresh / (1 - freshRes.pDraw);
+      const tiredShare  = tired  / (1 - tiredRes.pDraw);
+      const passed = tiredShare < freshShare - 1e-9;
+      tests.push({ name: "Fatigue reduces P(win | not draw)", passed, info: `fresh=${fresh.toFixed(3)} (share=${freshShare.toFixed(3)}) tired=${tired.toFixed(3)} (share=${tiredShare.toFixed(3)})` });
     }
 
-    // Test 6: higher TECH increases P(win)
+    // Antisymmetry sanity: EV(our, opp) ≈ -EV(opp, our) in a simple 1v1
     {
-      const a = { weight: 90, condition: 8, tech: 9 };
-      const b = { weight: 90, condition: 8, tech: 5 };
-      const pHighTech = probabilityModel(a, b, params, 1, 1).pWin;
-      const pLowTech  = probabilityModel({ ...a, tech: 5 }, { ...b, tech: 9 }, params, 1, 1).pWin;
-      tests.push({ name: "Higher technique ↑ P(win)", passed: pHighTech > pLowTech, info: `Δtech=+4: p0=${pLowTech.toFixed(3)} → p1${pHighTech.toFixed(3)},` });
+      const A = [{ name: "A", weight: 95, condition: 7, tech: 7 }];
+      const B = [{ name: "B", weight: 85, condition: 7, tech: 7 }];
+      const evAB = expectedNetWins(A, B, params);
+      const evBA = expectedNetWins(B, A, params);
+      const passed = Math.abs(evAB + evBA) < 1e-9;
+      tests.push({ name: "EV antisymmetry (1v1)", passed, info: `evAB=${evAB.toFixed(6)} evBA=${evBA.toFixed(6)}` });
     }
 
     return tests;
   }
 
-  const testResults = useMemo(runTests, [alpha, gamma, weightImportance, drawBase, drawDecay, drawCap, skillKg, skillSlope, streakPenalty]);
+  const testResults = useMemo(runTests, [wGamma, wAlpha, cGamma, cAlpha, tGamma, tAlpha, drawBase0, splitK, streakPenalty]);
+
+  // Totals
+  const oppTotal = oppTeam.reduce((s, p) => s + (Number(p.weight) || 0), 0);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
       <h1 className="text-2xl font-bold">Quintet Lineup Optimizer</h1>
       <p className="text-sm text-gray-600">
-        Win chance = logistic(x) of a scaled, nonlinear advantage (weightImportance, gamma) plus a bias for technique;
-        draws shrink with drawDecay from drawBase up to drawCap. Condition and Tech are 1–10. Fatigue from consecutive fights is penalized too.
-        Look at the sanity check in the bottom to figure out if the Deltas match up with your expected win probability variations.
+        Simple three-delta model with multipliers (importance) and exponents (nonlinearity). Draw uses a PD(0) baseline, never drops below 0.25, and decays with |S|.
       </p>
 
-      {/* Rosters + Controls */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
           <RosterEditor team={ourTeam} setTeam={setOurTeam} title="Our Team" />
-          <RosterEditor team={oppTeam} setTeam={setOppTeam} title="Opponent Team" />
+          <RosterEditor team={oppTeam} setTeam={setOppTeam} title={`Opponent Team (total: ${oppTotal.toFixed(1)} kg)`} />
         </div>
         <div className="space-y-4">
-          {/* Model Parameters Panel */}
           <div className="bg-white rounded-2xl shadow p-4">
             <h3 className="font-semibold mb-2">Model parameters</h3>
-            <TextInput label="Weight importance" value={weightImportance} onChange={setWeightImportance} step={0.01} min={0} help="Multiplier converting kg diff to prob units." />
-            <TextInput label="Nonlinearity exponent (gamma)" value={gamma} onChange={setGamma} step={0.05} min={0.5} help=">1 makes big edges disproportionately strong." />
-            <TextInput label="Logistic slope (alpha)" value={alpha} onChange={setAlpha} step={0.05} min={0.1} help="How sharply advantage converts to win chance." />
-            <TextInput label="Draw base" value={drawBase} onChange={setDrawBase} step={0.01} min={0} max={0.99} help="Draw chance when matchups are even." />
-            <TextInput label="Draw decay" value={drawDecay} onChange={setDrawDecay} step={0.05} min={0} help="Higher = draws vanish faster as advantage grows." />
-            <TextInput label="Draw cap" value={drawCap} onChange={setDrawCap} step={0.01} min={0} max={0.99} help="Upper bound on draw probability." />
-            <TextInput label="Skill kg per TECH point" value={skillKg} onChange={setSkillKg} step={0.5} min={0} help="How many kg of edge each TECH point is worth." />
-            <TextInput label="Skill slope" value={skillSlope} onChange={setSkillSlope} step={0.1} min={0} help="Multiplier on the technical bias in logistic input." />
-            <TextInput label="Streak penalty (per extra fight)" value={streakPenalty} onChange={setStreakPenalty} step={0.01} min={0} max={0.2} help="Per additional consecutive fight, reduce effective condition by this fraction (e.g., 0.08 = 8%)." />
+            <TextInput label="Weight exponent (γw)" value={wGamma} onChange={setWGamma} step={0.1} min={0.5} help="Nonlinearity for weight delta" />
+            <TextInput label="Weight multiplier (αw)" value={wAlpha} onChange={setWAlpha} step={0.1} min={0} help="Importance of weight" />
+
+            <TextInput label="Condition exponent (γc)" value={cGamma} onChange={setCGamma} step={0.1} min={0.5} help="Nonlinearity for condition delta" />
+            <TextInput label="Condition multiplier (αc)" value={cAlpha} onChange={setCAlpha} step={0.1} min={0} help="Importance of condition" />
+
+            <TextInput label="Technique exponent (γt)" value={tGamma} onChange={setTGamma} step={0.1} min={0.5} help="Nonlinearity for technique delta" />
+            <TextInput label="Technique multiplier (αt)" value={tAlpha} onChange={setTAlpha} step={0.1} min={0} help="Importance of technique" />
+
+            <TextInput label="Draw PD(0) baseline" value={drawBase0} onChange={setDrawBase0} step={0.01} min={0.25} max={0.95} help="Draw at equal matchups. Floor is 0.25." />
+            <TextInput label="Split softness (k)" value={splitK} onChange={setSplitK} step={0.1} min={0.1} help="Higher = slower shift from 50/50 of non-draw mass" />
+            <TextInput label="Streak penalty / extra fight" value={streakPenalty} onChange={setStreakPenalty} step={0.01} min={0} max={0.2} help="Reduces effective condition for consecutive bouts" />
           </div>
-          {/* Opponent-order model mode */}
           <div className="bg-white rounded-2xl shadow p-4">
             <h3 className="font-semibold mb-2">Opponent-order assumption</h3>
             <select className="w-full border rounded-xl p-2" value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="exploit">Exploitative: max EV vs current opponent order</option>
-              <option value="robust">Robust: max our worst-case EV (opponent picks their best order)</option>
+              <option value="exploit">Exploitative: maximize EV vs current opponent order</option>
+              <option value="robust">Robust: maximize our worst-case EV</option>
             </select>
           </div>
-          <ProbPreview />
         </div>
       </div>
 
-
-      {/* Recommendation + Best Response */}
       <div className="bg-white rounded-2xl shadow p-4">
         <h3 className="font-semibold mb-3">Recommended Order</h3>
         {bestOurOrderIdxs.length > 0 ? (
           <div className="space-y-2">
             <OrderBadge label={`Our optimal order (${mode}) — EV net wins: ${result.best.ev.toFixed(3)}`} team={ourTeam} orderIdxs={bestOurOrderIdxs} />
             {oppBestResponse && (
-              <OrderBadge label = {`Assuming opponent best response — EV: ${oppBestResponse.ev.toFixed(3)}`}  team={oppTeam} orderIdxs={oppBestResponse.order} />
+              <OrderBadge label={`Assuming opponent best response — OUR EV vs that: ${oppBestResponse.ev.toFixed(3)}`} team={oppTeam} orderIdxs={oppBestResponse.order} />
             )}
           </div>
         ) : (
@@ -665,12 +519,11 @@ export default function App() {
         )}
       </div>
 
-      {/* Top 5 Our Orders */}
       <div className="bg-white rounded-2xl shadow p-4">
         <h3 className="font-semibold mb-3">Top 5 Our Orders (by EV)</h3>
         <div className="space-y-2">
           {result.top.map((row, i) => (
-            <div key={i} className="border rounded-xl p-3">
+            <div key={i} className="border rounded-2xl p-3">
               <div className="text-sm text-gray-600">EV net wins: {row.ev.toFixed(3)}</div>
               <ol className="flex flex-wrap gap-2 mt-1">
                 {row.order.map((idx, k) => (
@@ -682,24 +535,25 @@ export default function App() {
         </div>
       </div>
 
-      {/* Best orders with each player first */}
       <div className="bg-white rounded-2xl shadow p-4">
         <h3 className="font-semibold mb-3">Best Orders with Each Player First</h3>
         <div className="space-y-2">
-          {forcedFirst.map((row, i) => (
-            <div key={i} className="border rounded-xl p-3">
-              <div className="text-sm text-gray-600">{ourTeam[row.first].name} first — EV net wins: {row.ev.toFixed(3)}</div>
-              <ol className="flex flex-wrap gap-2 mt-1">
-                {row.order.map((idx, k) => (
-                  <li key={k} className="px-3 py-1 rounded-full bg-gray-100 border">{ourTeam[idx].name}</li>
-                ))}
-              </ol>
-            </div>
-          ))}
+          {ourTeam.map((_, i) => {
+            const res = mode === "robust" ? robustOurOrderWithFirst(ourTeam, oppTeam, params, i) : optimizeOurOrderWithFirst(ourTeam, oppTeam, params, i);
+            return (
+              <div key={i} className="border rounded-xl p-3">
+                <div className="text-sm text-gray-600">{ourTeam[i].name} first — EV net wins: {res.ev.toFixed(3)}</div>
+                <ol className="flex flex-wrap gap-2 mt-1">
+                  {res.order.map((idx, k) => (
+                    <li key={k} className="px-3 py-1 rounded-full bg-gray-100 border">{ourTeam[idx].name}</li>
+                  ))}
+                </ol>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Diagnostics & Tests */}
       <div className="bg-white rounded-2xl shadow p-4">
         <h3 className="font-semibold mb-3">Diagnostics & Tests</h3>
         <ul className="list-disc pl-5 space-y-1">
@@ -713,10 +567,10 @@ export default function App() {
 
       <ProbMatrix />
 
-      {/* Footnote / sanity notes */}
-      <div className="text-xs text-gray-500">
-        Condition maps to ~0.85–1.15 on weight; technique adds ≈ (skillKg × weightImportance) per point in normalized units.
-        The markov chain explores every win/lose/draw branch for any two orders via brute "enumeration".
+      <div className="text-xs text-gray-500 space-y-1">
+        <div><span className="font-semibold">Probability model:</span> S = αw·sign(Δw)|Δw|^γw + αc·sign(Δc)|Δc|^γc + αt·sign(Δt)|Δt|^γt. Positive S favors us.</div>
+        <div>Draw PD = max(0.25, PD(0) − 0.5·tanh(|S|)). Remaining mass splits to win/loss by h = 0.5·|S|/(|S|+k).</div>
+        <div>Fatigue only reduces condition via a linear penalty per consecutive bout, then deltas are recomputed.</div>
       </div>
     </div>
   );

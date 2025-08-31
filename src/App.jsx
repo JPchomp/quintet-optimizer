@@ -7,7 +7,7 @@ import React, { useMemo, useState } from "react";
  * Probability model: three deltas (weight, condition, technique).
  * Each delta has its own exponent (nonlinearity) and multiplier (importance).
  * No per-factor scales; the multipliers set relative importance directly.
- * Draw probability PD is bounded with a floor of 0.25 and PD(0) = user-set PD0.
+ * Draw probability PD is bounded with a floor of 0.2 and PD(0) = user-set PD0.
  * PD decays with |S| via a fixed tanh curve (no extra params).
  * Winner-stays fatigue reduces CONDITION only before computing its delta.
  */
@@ -167,9 +167,9 @@ function probabilityModel(a, b, params, streakA = 1, streakB = 1) {
   const S = Sw + Sc + St; // sign favors A when positive
   const A = Math.abs(S);
 
-  // Draw probability: floor 0.25, baseline PD0 at S=0, decay with |S| via tanh
-  const PD0 = clamp(params.drawBase0, 0.25, 0.95); // keep sane
-  const PD = Math.max(0.25, PD0 - 0.5 * Math.tanh(A));
+  // Draw probability: floor 0.2, baseline PD0 at S=0, decay with |S| via tanh
+  const PD0 = clamp(params.drawBase0, 0.2, 0.95); // keep sane
+  const PD = Math.max(0.2, PD0 - 0.5 * Math.tanh(A));
   const M = 1 - PD;
 
   // Split remaining mass with softness k, h in [0, 0.5)
@@ -299,18 +299,18 @@ export default function App() {
   const [oppTeam, setOppTeam] = useState(defaultTeamOthers("Opp"));
 
   // Model knobs — multipliers and exponents only; PD0 for draws; split softness; fatigue
-  const [wGamma, setWGamma] = useState(1.0);
+  const [wGamma, setWGamma] = useState(0.5);
+  const [cGamma, setCGamma] = useState(0.5);
+  const [tGamma, setTGamma] = useState(0.5);
+
+  // 
   const [wAlpha, setWAlpha] = useState(1.0);
-
-  const [cGamma, setCGamma] = useState(1.0);
   const [cAlpha, setCAlpha] = useState(1.0);
-
-  const [tGamma, setTGamma] = useState(1.0);
   const [tAlpha, setTAlpha] = useState(1.0);
 
-  const [drawBase0, setDrawBase0] = useState(0.80); // PD(0)
+  const [drawBase0, setDrawBase0] = useState(0.50); // PD(0)
   const [splitK, setSplitK] = useState(2.0);        // softness for win/loss split
-  const [streakPenalty, setStreakPenalty] = useState(0.08); // per extra consecutive fight
+  const [streakPenalty, setStreakPenalty] = useState(0.1); // per extra consecutive fight
   const [mode, setMode] = useState("exploit");
 
   const params = { wGamma, wAlpha, cGamma, cAlpha, tGamma, tAlpha, drawBase0, splitK, streakPenalty };
@@ -409,17 +409,17 @@ export default function App() {
       const a = { weight: 90, condition: 5, tech: 5 };
       const b = { weight: 90, condition: 5, tech: 5 };
       const { pWin, pDraw, pLose } = probabilityModel(a, b, params, 1, 1);
-      const PD0 = clamp(drawBase0, 0.25, 0.95);
+      const PD0 = clamp(drawBase0, 0.2, 0.95);
       const target = (1 - PD0) / 2;
       tests.push({ name: "Zero deltas baseline", passed: Math.abs(pDraw - PD0) < 1e-6 && Math.abs(pWin - target) < 1e-3, info: `W=${(pWin*100).toFixed(1)} D=${(pDraw*100).toFixed(1)} L=${(pLose*100).toFixed(1)} (PD0=${(PD0*100).toFixed(1)})` });
     }
 
-    // Draw never below 0.25
+    // Draw never below 0.2
     {
       const a = { weight: 140, condition: 10, tech: 10 };
       const b = { weight: 60,  condition: 1,  tech: 1 };
       const { pDraw } = probabilityModel(a, b, params, 1, 1);
-      tests.push({ name: "Draw floor 0.25", passed: pDraw >= 0.25 - 1e-9, info: `pD=${pDraw.toFixed(3)}` });
+      tests.push({ name: "Draw floor 0.2", passed: pDraw >= 0.2 - 1e-9, info: `pD=${pDraw.toFixed(3)}` });
     }
 
     // Monotonicity checks
@@ -471,7 +471,7 @@ export default function App() {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Quintet Lineup Optimizer</h1>
       <p className="text-sm text-gray-600">
-        Simple three-delta model with multipliers (importance) and exponents (nonlinearity). Draw uses a PD(0) baseline, never drops below 0.25, and decays with |S|.
+        Simple three-delta model with multipliers (importance) and exponents (nonlinearity). Draw uses a PD(0) baseline, never drops below 0.2, and decays with |S|.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -491,7 +491,7 @@ export default function App() {
             <TextInput label="Technique exponent (γt)" value={tGamma} onChange={setTGamma} step={0.1} min={0.5} help="Nonlinearity for technique delta" />
             <TextInput label="Technique multiplier (αt)" value={tAlpha} onChange={setTAlpha} step={0.1} min={0} help="Importance of technique" />
 
-            <TextInput label="Draw PD(0) baseline" value={drawBase0} onChange={setDrawBase0} step={0.01} min={0.25} max={0.95} help="Draw at equal matchups. Floor is 0.25." />
+            <TextInput label="Draw PD(0) baseline" value={drawBase0} onChange={setDrawBase0} step={0.01} min={0.2} max={0.95} help="Draw at equal matchups. Floor is 0.2." />
             <TextInput label="Split softness (k)" value={splitK} onChange={setSplitK} step={0.1} min={0.1} help="Higher = slower shift from 50/50 of non-draw mass" />
             <TextInput label="Streak penalty / extra fight" value={streakPenalty} onChange={setStreakPenalty} step={0.01} min={0} max={0.2} help="Reduces effective condition for consecutive bouts" />
           </div>
@@ -569,7 +569,7 @@ export default function App() {
 
       <div className="text-xs text-gray-500 space-y-1">
         <div><span className="font-semibold">Probability model:</span> S = αw·sign(Δw)|Δw|^γw + αc·sign(Δc)|Δc|^γc + αt·sign(Δt)|Δt|^γt. Positive S favors us.</div>
-        <div>Draw PD = max(0.25, PD(0) − 0.5·tanh(|S|)). Remaining mass splits to win/loss by h = 0.5·|S|/(|S|+k).</div>
+        <div>Draw PD = max(0.2, PD(0) − 0.5·tanh(|S|)). Remaining mass splits to win/loss by h = 0.5·|S|/(|S|+k).</div>
         <div>Fatigue only reduces condition via a linear penalty per consecutive bout, then deltas are recomputed.</div>
       </div>
     </div>
